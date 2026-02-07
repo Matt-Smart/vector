@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use vector_lib::{event::Event, partition::Partitioner};
 
 use crate::{internal_events::TemplateRenderingError, template::Template};
@@ -6,6 +8,7 @@ use crate::{internal_events::TemplateRenderingError, template::Template};
 pub struct ChroniclePartitionKey {
     pub log_type: String,
     pub namespace: Option<String>,
+    pub labels: Option<Vec<(String, String)>>,
 }
 
 /// Partitions items based on the generated key for the given event.
@@ -13,18 +16,21 @@ pub struct ChroniclePartitioner {
     log_type: Template,
     fallback_log_type: Option<String>,
     namespace_template: Option<Template>,
+    label_templates: Option<HashMap<String, Template>>,
 }
 
 impl ChroniclePartitioner {
-    pub const fn new(
+    pub fn new(
         log_type: Template,
         fallback_log_type: Option<String>,
         namespace_template: Option<Template>,
+        label_templates: Option<HashMap<String, Template>>,
     ) -> Self {
         Self {
             log_type,
             fallback_log_type,
             namespace_template,
+            label_templates,
         }
     }
 }
@@ -69,9 +75,33 @@ impl Partitioner for ChroniclePartitioner {
             })
             .transpose()
             .ok()?;
+
+        let labels = self.label_templates.as_ref().map(|templates| {
+            let mut rendered: Vec<(String, String)> = templates
+                .iter()
+                .filter_map(|(key, template)| {
+                    match template.render_string(item) {
+                        Ok(value) => Some((key.clone(), value)),
+                        Err(error) => {
+                            emit!(TemplateRenderingError {
+                                error,
+                                field: Some("labels"),
+                                drop_event: false,
+                            });
+                            None
+                        }
+                    }
+                })
+                .collect();
+            rendered.sort_by(|a, b| a.0.cmp(&b.0));
+            rendered
+        });
+        let labels = labels.and_then(|v| if v.is_empty() { None } else { Some(v) });
+
         Some(ChroniclePartitionKey {
             log_type,
             namespace,
+            labels,
         })
     }
 }

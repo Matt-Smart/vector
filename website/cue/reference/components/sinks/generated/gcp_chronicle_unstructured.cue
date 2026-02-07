@@ -566,12 +566,12 @@ generated: components: sinks: gcp_chronicle_unstructured: configuration: {
 		type: object: {
 			examples: [{
 				source: "vector"
-				tenant: "marketing"
+				tenant: "{{ tenant }}"
 			}]
 			options: "*": {
 				description: "A Chronicle label."
 				required:    true
-				type: string: {}
+				type: string: syntax: "template"
 			}
 		}
 	}

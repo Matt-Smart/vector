@@ -204,9 +204,10 @@ pub struct ChronicleUnstructuredConfig {
     pub namespace: Option<Template>,
 
     /// A set of labels that are attached to each batch of events.
+    #[configurable(metadata(docs::templateable))]
     #[configurable(metadata(docs::examples = "chronicle_labels_examples()"))]
     #[configurable(metadata(docs::additional_props_description = "A Chronicle label."))]
-    pub labels: Option<HashMap<String, String>>,
+    pub labels: Option<HashMap<String, Template>>,
 
     #[serde(flatten)]
     pub auth: GcpAuthConfig,
@@ -251,10 +252,16 @@ pub struct ChronicleUnstructuredConfig {
     acknowledgements: AcknowledgementsConfig,
 }
 
-fn chronicle_labels_examples() -> HashMap<String, String> {
+fn chronicle_labels_examples() -> HashMap<String, Template> {
     let mut examples = HashMap::new();
-    examples.insert("source".to_string(), "vector".to_string());
-    examples.insert("tenant".to_string(), "marketing".to_string());
+    examples.insert(
+        "source".to_string(),
+        Template::try_from("vector").unwrap(),
+    );
+    examples.insert(
+        "tenant".to_string(),
+        Template::try_from("{{ tenant }}").unwrap(),
+    );
     examples
 }
 
@@ -363,6 +370,7 @@ impl ChronicleUnstructuredConfig {
             self.log_type.clone(),
             self.fallback_log_type.clone(),
             self.namespace.clone(),
+            self.labels.clone(),
         ))
     }
 
@@ -418,7 +426,6 @@ struct ChronicleRequestBody {
 #[derive(Clone, Debug)]
 struct ChronicleEncoder {
     customer_id: String,
-    labels: Option<Vec<Label>>,
     encoder: codecs::Encoder<()>,
     transformer: codecs::Transformer,
 }
@@ -466,7 +473,11 @@ impl Encoder<(ChroniclePartitionKey, Vec<Event>)> for ChronicleEncoder {
         let json = json!(ChronicleRequestBody {
             customer_id: self.customer_id.clone(),
             namespace: key.namespace,
-            labels: self.labels.clone(),
+            labels: key.labels.map(|labs| {
+                labs.into_iter()
+                    .map(|(k, v)| Label { key: k, value: v })
+                    .collect()
+            }),
             log_type: key.log_type,
             entries: events,
         });
@@ -586,14 +597,6 @@ impl ChronicleRequestBuilder {
         let encoder = vector_lib::codecs::Encoder::<()>::new(serializer);
         let encoder = ChronicleEncoder {
             customer_id: config.customer_id.clone(),
-            labels: config.labels.as_ref().map(|labs| {
-                labs.iter()
-                    .map(|(k, v)| Label {
-                        key: k.to_string(),
-                        value: v.to_string(),
-                    })
-                    .collect::<Vec<_>>()
-            }),
             encoder,
             transformer,
         };
